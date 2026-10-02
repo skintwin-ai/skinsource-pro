@@ -86,6 +86,36 @@ def record_supplier_qualification(data: dict) -> tuple[dict, int]:
     )
 
 
+def kilograms_to_milligrams(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise StageRejection("quantity_needed must be kilograms")
+    milligrams = int(round(float(value) * 1_000_000))
+    if milligrams < 1:
+        raise StageRejection("milligrams must be a positive integer")
+    return milligrams
+
+
+def record_received_lot(data: dict) -> tuple[dict, int]:
+    """Receive a lot when a procurement request is completed."""
+    milligrams = data.get("milligrams")
+    if not isinstance(milligrams, int) or isinstance(milligrams, bool):
+        try:
+            milligrams = kilograms_to_milligrams(data.get("quantity_kg"))
+        except StageRejection as exc:
+            return {"ok": False, "error": str(exc)}, 400
+    return respond(
+        {
+            "command": "receive_lot",
+            "args": {
+                "lot_id": data.get("lot_id") or "",
+                "ingredient_id": data.get("ingredient_id") or "",
+                "qualification_id": data.get("qualification_id") or "",
+                "milligrams": milligrams,
+            },
+        }
+    )
+
+
 def respond(body: dict) -> tuple[dict, int]:
     command = body.get("command")
     handler = HANDLERS.get(command)

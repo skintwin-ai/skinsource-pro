@@ -7,6 +7,7 @@ from pathlib import Path
 from src.chain_commands import (
     ingredient_create_guard,
     record_created_ingredient,
+    record_received_lot,
     record_supplier_qualification,
     respond,
 )
@@ -80,6 +81,47 @@ class ChainCommandTests(unittest.TestCase):
                         "qualification_id": "qual-ascorbic",
                         "supplier_name": "Cape Acids",
                         "ingredient_id": "ascorbic",
+                    }
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertFalse(ledger.exists())
+
+    def test_completed_procurement_receives_kilograms_as_milligrams(self) -> None:
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            body, status = record_received_lot(
+                {
+                    "lot_id": "lot-ascorbic",
+                    "ingredient_id": "ascorbic",
+                    "qualification_id": "qual-ascorbic",
+                    "quantity_kg": 0.05,
+                }
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 200)
+        self.assertEqual(body["artifact"]["milligrams"], 50_000)
+
+    def test_lot_receipt_against_an_empty_ledger_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = "/agent/repos/skintwin-ecosystem-design"
+            try:
+                body, status = record_received_lot(
+                    {
+                        "lot_id": "lot-ascorbic",
+                        "ingredient_id": "ascorbic",
+                        "qualification_id": "qual-ascorbic",
+                        "milligrams": 50_000,
                     }
                 )
             finally:
