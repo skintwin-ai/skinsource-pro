@@ -40,16 +40,58 @@ def receive_lot(args: dict) -> dict:
     }
 
 
+_IDENTITY_KEYS = (
+    "name",
+    "ingredientId",
+    "ingredient_id",
+    "inciName",
+    "inci_name",
+    "inci",
+    "casNumber",
+    "cas_number",
+    "cas",
+)
+
+
+def _named(record: object, *keys: str) -> str:
+    """The first non-blank string wins. A blank value falls through to the next key."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def ingredient_column_values(data: dict) -> dict:
+    """INCI and CAS stored on the ingredient row, using the names the ledger reads."""
+    if not isinstance(data, dict):
+        return {}
+    stored: dict[str, str] = {}
+    inci = _named(data, "inciName", "inci_name", "inci")
+    cas = _named(data, "casNumber", "cas_number", "cas")
+    if inci:
+        stored["inci_name"] = inci
+    if cas:
+        stored["cas_number"] = cas
+    return stored
+
+
 def ingredient_identity(data: dict) -> dict | None:
     """Map an ingredient create payload onto a specify command, when it has identity."""
-    if not data.get("inci_name") and not data.get("cas_number"):
+    if not isinstance(data, dict):
+        return None
+    inci = _named(data, "inciName", "inci_name", "inci")
+    cas = _named(data, "casNumber", "cas_number", "cas")
+    if not inci and not cas:
         return None
     return {
         "command": "specify_ingredient",
         "args": {
-            "ingredient_id": data.get("name") or "",
-            "inci": data.get("inci_name") or "",
-            "cas": data.get("cas_number") or "",
+            "ingredient_id": _named(data, "ingredientId", "ingredient_id", "name"),
+            "inci": inci,
+            "cas": cas,
         },
     }
 
@@ -74,13 +116,12 @@ def record_updated_ingredient(existing: dict, data: dict) -> tuple[dict, int] | 
     """Specify an ingredient when an update first gives it an INCI name and CAS number."""
     if not isinstance(existing, dict) or not isinstance(data, dict):
         return None
-    if not any(key in data for key in ("name", "inci_name", "cas_number")):
+    if not any(key in data for key in _IDENTITY_KEYS):
         return None
-    merged = {
-        "name": data["name"] if "name" in data else existing.get("name"),
-        "inci_name": data["inci_name"] if "inci_name" in data else existing.get("inci_name"),
-        "cas_number": data["cas_number"] if "cas_number" in data else existing.get("cas_number"),
-    }
+    merged = dict(existing)
+    for key in _IDENTITY_KEYS:
+        if key in data:
+            merged[key] = data[key]
     command = ingredient_identity(merged)
     if command is None:
         return None
