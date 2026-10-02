@@ -70,6 +70,50 @@ def record_created_ingredient(data: dict) -> tuple[dict, int] | None:
     return respond(command)
 
 
+def record_updated_ingredient(existing: dict, data: dict) -> tuple[dict, int] | None:
+    """Specify an ingredient when an update first gives it an INCI name and CAS number."""
+    if not isinstance(existing, dict) or not isinstance(data, dict):
+        return None
+    if not any(key in data for key in ("name", "inci_name", "cas_number")):
+        return None
+    merged = {
+        "name": data["name"] if "name" in data else existing.get("name"),
+        "inci_name": data["inci_name"] if "inci_name" in data else existing.get("inci_name"),
+        "cas_number": data["cas_number"] if "cas_number" in data else existing.get("cas_number"),
+    }
+    command = ingredient_identity(merged)
+    if command is None:
+        return None
+    try:
+        args = specify_ingredient(command["args"])
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    prior = _recorded_ingredient(args["ingredient_id"])
+    if prior == args:
+        return {"ok": True, "count": 0}, 200
+    return respond({"command": "specify_ingredient", "args": args})
+
+
+def _recorded_ingredient(ingredient_id: str) -> dict | None:
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        return None
+    found = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "specify_ingredient":
+            continue
+        args = record.get("args") or {}
+        if args.get("ingredient_id") == ingredient_id:
+            found = args
+    return found
+
+
 def record_supplier_qualification(data: dict) -> tuple[dict, int]:
     """Qualify a supplier for an ingredient before the offering is stored."""
     return respond(

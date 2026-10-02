@@ -8,6 +8,7 @@ from src.chain_commands import (
     ingredient_create_guard,
     record_created_ingredient,
     record_received_lot,
+    record_updated_ingredient,
     record_received_package,
     record_supplier_qualification,
     respond,
@@ -163,6 +164,46 @@ class ChainCommandTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
         self.assertFalse(ledger.exists())
+
+    def test_an_ingredient_update_specifies_identity_once(self) -> None:
+        existing = {"name": "glycerin", "inci_name": None, "cas_number": None}
+        self.assertIsNone(record_updated_ingredient(existing, {"description": "humectant"}))
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                rejected, rejected_status = record_updated_ingredient(
+                    existing, {"inci_name": "Glycerin", "cas_number": "bad"}
+                )
+                self.assertEqual(rejected_status, 400)
+                self.assertFalse(ledger.exists())
+                body, status = record_updated_ingredient(
+                    existing, {"inci_name": "Glycerin", "cas_number": "56-81-5"}
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["artifact"]["ingredient_id"], "glycerin")
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("56-81-5", text)
+                again, again_status = record_updated_ingredient(
+                    {"name": "glycerin", "inci_name": "Glycerin", "cas_number": "56-81-5"},
+                    {"description": "humectant", "inci_name": "Glycerin"},
+                )
+                self.assertEqual(again_status, 200)
+                self.assertEqual(again["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                changed, changed_status = record_updated_ingredient(
+                    {"name": "glycerin", "inci_name": "Glycerin", "cas_number": "56-81-5"},
+                    {"cas_number": "50-81-7"},
+                )
+                self.assertEqual(changed_status, 400)
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
 
     def test_supply_chain_route_rejects_an_unknown_command(self) -> None:
         body, status = respond({"command": "manufacture", "args": {}})

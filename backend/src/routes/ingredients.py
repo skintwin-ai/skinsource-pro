@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import record_created_ingredient, respond, use_shared_ledger
+from src.chain_commands import record_created_ingredient, record_updated_ingredient, respond, use_shared_ledger
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -158,6 +158,20 @@ def update_ingredient(ingredient_id):
         
         if not data:
             return jsonify({'error': 'No data provided'}), 400
+
+        use_shared_ledger()
+        recorded = record_updated_ingredient(
+            {
+                "name": ingredient.name,
+                "inci_name": ingredient.inci_name,
+                "cas_number": ingredient.cas_number,
+            },
+            data,
+        )
+        if recorded is not None:
+            body, status = recorded
+            if status != 200:
+                return jsonify({'error': body.get('error', 'ingredient rejected')}), status
         
         # Update fields
         for field in ['name', 'inci_name', 'cas_number', 'category', 'function', 
