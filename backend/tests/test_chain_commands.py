@@ -41,7 +41,6 @@ class ChainCommandTests(unittest.TestCase):
             ledger = Path(tmp) / "supply-chain.jsonl"
             previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
             os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
-            os.environ["SKINTWIN_HUB_ROOT"] = "/agent/repos/skintwin-ecosystem-design"
             try:
                 body, status = record_created_ingredient(
                     {
@@ -74,7 +73,6 @@ class ChainCommandTests(unittest.TestCase):
             ledger = Path(tmp) / "supply-chain.jsonl"
             previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
             os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
-            os.environ["SKINTWIN_HUB_ROOT"] = "/agent/repos/skintwin-ecosystem-design"
             try:
                 body, status = record_supplier_qualification(
                     {
@@ -114,7 +112,6 @@ class ChainCommandTests(unittest.TestCase):
             ledger = Path(tmp) / "supply-chain.jsonl"
             previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
             os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
-            os.environ["SKINTWIN_HUB_ROOT"] = "/agent/repos/skintwin-ecosystem-design"
             try:
                 body, status = record_received_lot(
                     {
