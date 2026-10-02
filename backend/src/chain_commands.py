@@ -203,6 +203,15 @@ def offering_qualification(data: dict, supplier_name: str, ingredient_name: str)
 
 
 def kilograms_to_milligrams(value: object) -> int:
+    """A numeric kilogram string is the same quantity. A blank or word is not."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise StageRejection("quantity_needed must be kilograms")
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise StageRejection("quantity_needed must be kilograms") from exc
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise StageRejection("quantity_needed must be kilograms")
     milligrams = int(round(float(value) * 1_000_000))
