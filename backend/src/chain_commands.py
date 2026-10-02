@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -191,16 +192,42 @@ def _locator():
     return module
 
 
+def _recorded_hub(directory: Path, file_name: str) -> Path | None:
+    directory = directory.resolve()
+    registry_path = directory / "domain" / "org-ecosystem.json"
+    script = directory / "domain" / file_name
+    if not registry_path.is_file() or not (directory / "domain" / "supply-chain.json").is_file():
+        return None
+    if not script.is_file():
+        return None
+    try:
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    hub = data.get("hub") if isinstance(data, dict) else None
+    name = hub.get("name") if isinstance(hub, dict) else None
+    if name != directory.name:
+        return None
+    return script
+
+
 def _locate_script() -> Path | None:
     override = os.environ.get("SKINTWIN_HUB_ROOT")
     if override:
-        script = Path(override) / "domain" / "locate.py"
-        if script.is_file() and (Path(override) / "domain" / "org-ecosystem.json").is_file():
-            return script
+        found = _recorded_hub(Path(override), "locate.py")
+        if found is not None:
+            return found
     start = Path(__file__).resolve()
     for parent in [start, *start.parents]:
         if not (parent / ".git").exists():
             continue
-        script = parent.parent / "skintwin-ecosystem-design" / "domain" / "locate.py"
-        return script if script.is_file() else None
+        try:
+            children = list(parent.parent.iterdir())
+        except OSError:
+            return None
+        for child in children:
+            found = _recorded_hub(child, "locate.py")
+            if found is not None:
+                return found
+        return None
     return None
