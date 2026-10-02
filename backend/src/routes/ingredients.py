@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import StageRejection, ingredient_create_guard, respond
+from src.chain_commands import StageRejection, ingredient_create_guard, respond, use_shared_ledger
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -102,6 +102,7 @@ def get_ingredient(ingredient_id):
 @ingredients_bp.route('/supply-chain', methods=['POST'])
 def supply_chain_command():
     """Accept an ingredient, qualification, or lot command for the org ledger."""
+    use_shared_ledger()
     body, status = respond(request.get_json(silent=True) or {})
     return jsonify(body), status
 
