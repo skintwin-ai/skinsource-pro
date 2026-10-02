@@ -162,15 +162,30 @@ def update_procurement_request(request_id):
         if data.get('status') == 'completed':
             ingredient = Ingredient.query.get(procurement_request.ingredient_id)
             use_shared_ledger()
-            received, received_status = record_received_lot(
-                {
-                    "lot_id": data.get("lot_id") or f"lot-{procurement_request.id}",
-                    "ingredient_id": ingredient.name if ingredient is not None else "",
-                    "qualification_id": data.get("qualification_id") or "",
-                    "milligrams": data.get("milligrams"),
-                    "quantity_kg": data.get("quantity_needed", procurement_request.quantity_needed),
-                }
-            )
+            if data.get("component_id") and data.get("pieces") is not None:
+                from src.chain_commands import record_received_package
+
+                received, received_status = record_received_package(
+                    {
+                        "component_id": data.get("component_id"),
+                        "name": data.get("name") or data.get("component_id"),
+                        "lot_id": data.get("lot_id") or f"pack-{procurement_request.id}",
+                        "supplier_name": data.get("supplier_name") or "",
+                        "pieces": data.get("pieces"),
+                    }
+                )
+                if received_status != 200:
+                    return jsonify({"error": received.get("error", "package rejected")}), received_status
+            else:
+                received, received_status = record_received_lot(
+                    {
+                        "lot_id": data.get("lot_id") or f"lot-{procurement_request.id}",
+                        "ingredient_id": ingredient.name if ingredient is not None else "",
+                        "qualification_id": data.get("qualification_id") or "",
+                        "milligrams": data.get("milligrams"),
+                        "quantity_kg": data.get("quantity_needed", procurement_request.quantity_needed),
+                    }
+                )
             if received_status != 200:
                 return jsonify({"error": received.get("error", "lot rejected")}), received_status
 
