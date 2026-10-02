@@ -179,12 +179,27 @@ def record_supplier_qualification(data: dict) -> tuple[dict, int]:
         {
             "command": "qualify_supplier",
             "args": {
-                "qualification_id": data.get("qualification_id") or "",
-                "supplier_name": data.get("supplier_name") or "",
-                "ingredient_id": data.get("ingredient_id") or "",
+                "qualification_id": _named(data, "qualificationId", "qualification_id"),
+                "supplier_name": _named(data, "supplierName", "supplier_name"),
+                "ingredient_id": _named(data, "ingredientId", "ingredient_id"),
             },
         }
     )
+
+
+def offering_qualification(data: dict, supplier_name: str, ingredient_name: str) -> dict:
+    """Ledger fields for an offering. The ingredient name is the ledger id."""
+    payload = data if isinstance(data, dict) else {}
+    qualification_id = _named(payload, "qualificationId", "qualification_id")
+    supplier = supplier_name.strip() if isinstance(supplier_name, str) else ""
+    ingredient = ingredient_name.strip() if isinstance(ingredient_name, str) else ""
+    if not qualification_id:
+        qualification_id = f"{supplier}:{ingredient}"
+    return {
+        "qualification_id": qualification_id,
+        "supplier_name": supplier,
+        "ingredient_id": ingredient,
+    }
 
 
 def kilograms_to_milligrams(value: object) -> int:

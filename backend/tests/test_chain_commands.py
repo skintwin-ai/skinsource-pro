@@ -7,6 +7,7 @@ from pathlib import Path
 from src.chain_commands import (
     completed_procurement_receipt,
     ingredient_create_guard,
+    offering_qualification,
     record_created_ingredient,
     record_received_lot,
     record_updated_ingredient,
@@ -172,6 +173,84 @@ class ChainCommandTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
         self.assertFalse(ledger.exists())
+
+    def test_an_offering_named_by_qualification_id_qualifies_that_ingredient_once(self) -> None:
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            named, named_status = record_supplier_qualification(
+                {
+                    "qualificationId": "qual-glycerin",
+                    "qualification_id": "qual-other",
+                    "supplierName": "Cape Acids",
+                    "supplier_name": "Other",
+                    "ingredientId": "glycerin",
+                    "ingredient_id": 7,
+                }
+            )
+            self.assertEqual(named_status, 200, named)
+            self.assertEqual(named["artifact"]["qualification_id"], "qual-glycerin")
+            self.assertEqual(named["artifact"]["supplier_name"], "Cape Acids")
+            self.assertEqual(named["artifact"]["ingredient_id"], "glycerin")
+            fallen = offering_qualification(
+                {
+                    "qualificationId": "  ",
+                    "qualification_id": "qual-snake",
+                    "ingredient_id": 7,
+                },
+                "Cape Acids",
+                "glycerin",
+            )
+            self.assertEqual(fallen["qualification_id"], "qual-snake")
+            self.assertEqual(fallen["ingredient_id"], "glycerin")
+            self.assertNotIn("7", fallen["ingredient_id"])
+            unnamed = offering_qualification({"ingredient_id": 7}, "Cape Acids", "glycerin")
+            self.assertEqual(unnamed["qualification_id"], "Cape Acids:glycerin")
+            self.assertEqual(unnamed["ingredient_id"], "glycerin")
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                numeric, numeric_status = record_supplier_qualification(
+                    {
+                        "qualificationId": "qual-numeric",
+                        "supplier_name": "Cape Acids",
+                        "ingredient_id": 7,
+                    }
+                )
+                self.assertEqual(numeric_status, 400)
+                self.assertFalse(numeric["ok"])
+                self.assertFalse(ledger.exists())
+                specified, specified_status = respond(
+                    {
+                        "command": "specify_ingredient",
+                        "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                    }
+                )
+                self.assertEqual(specified_status, 200)
+                fields = offering_qualification(
+                    {"qualificationId": "qual-glycerin", "ingredient_id": 7},
+                    "Cape Acids",
+                    "glycerin",
+                )
+                qualified, qualified_status = record_supplier_qualification(fields)
+                self.assertEqual(qualified_status, 200, qualified)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("qual-glycerin", text)
+                self.assertIn("glycerin", text)
+                self.assertNotIn('"ingredient_id": 7', text)
+                again, again_status = record_supplier_qualification(fields)
+                self.assertEqual(again_status, 400)
+                self.assertFalse(again["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
 
     def test_package_receipt_accepts_a_positive_piece_count(self) -> None:
         previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
