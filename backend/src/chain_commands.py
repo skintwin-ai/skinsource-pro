@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 CAS_RE = re.compile(r"^\d{2,7}-\d{2}-\d$")
@@ -148,56 +146,88 @@ HANDLERS = {
 
 
 def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
-    body, status = result
+    _body, status = result
     if status != 200 or os.environ.get("SKINTWIN_CHAIN_SKIP_DISPATCH") == "1":
         return result
-    ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
-    if not ledger:
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
         return result
-    hub = _hub_root()
-    if hub is None:
+    locator = _locator()
+    if locator is None:
         return {"ok": False, "error": "supply-chain hub is not present"}, 400
-    completed = subprocess.run(
-        [sys.executable, "-m", "domain.ledger"],
-        input=json.dumps(request),
-        text=True,
-        capture_output=True,
-        cwd=hub,
-        check=False,
-    )
-    if completed.returncode != 0:
-        message = _ledger_error(completed.stdout, completed.stderr)
-        return {"ok": False, "error": message}, 400
-    return body, status
+    error = locator.commit_command(request)
+    if error:
+        return {"ok": False, "error": error}, 400
+    return result
 
 
 def use_shared_ledger() -> None:
     """Point this process at the hub ledger when an API request records a stage."""
-    hub = _hub_root()
-    if hub is None:
-        return
-    os.environ.setdefault("SKINTWIN_HUB_ROOT", str(hub))
-    os.environ.setdefault("SKINTWIN_CHAIN_LEDGER", str(hub / "var" / "supply-chain.jsonl"))
+    locator = _locator()
+    if locator is not None:
+        locator.bind_ledger()
 
 
-def _hub_root() -> Path | None:
-    override = os.environ.get("SKINTWIN_HUB_ROOT")
-    candidates = [Path(override)] if override else []
-    candidates.extend(
-        [
-            Path("/agent/repos/skintwin-ecosystem-design"),
-            Path("/workspace/repos/skintwin-ecosystem-design"),
-        ]
-    )
-    for candidate in candidates:
-        if (candidate / "domain" / "ledger.py").is_file():
-            return candidate
-    return None
+_LOCATOR = None
 
 
-def _ledger_error(stdout: str, stderr: str) -> str:
+def _locator():
+    global _LOCATOR
+    if _LOCATOR is False:
+        return None
+    if _LOCATOR is not None:
+        return _LOCATOR
+    import importlib.util
+
+    script = _locate_script()
+    if script is None:
+        _LOCATOR = False
+        return None
+    spec = importlib.util.spec_from_file_location("skintwin_chain_locate", script)
+    if spec is None or spec.loader is None:
+        _LOCATOR = False
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _LOCATOR = module
+    return module
+
+
+def _recorded_hub(directory: Path, file_name: str) -> Path | None:
+    directory = directory.resolve()
+    registry_path = directory / "domain" / "org-ecosystem.json"
+    script = directory / "domain" / file_name
+    if not registry_path.is_file() or not (directory / "domain" / "supply-chain.json").is_file():
+        return None
+    if not script.is_file():
+        return None
     try:
-        payload = json.loads(stdout or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    return str(payload.get("error") or stderr or "ledger rejected the command")
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    hub = data.get("hub") if isinstance(data, dict) else None
+    name = hub.get("name") if isinstance(hub, dict) else None
+    if name != directory.name:
+        return None
+    return script
+
+
+def _locate_script() -> Path | None:
+    override = os.environ.get("SKINTWIN_HUB_ROOT")
+    if override:
+        found = _recorded_hub(Path(override), "locate.py")
+        if found is not None:
+            return found
+    start = Path(__file__).resolve()
+    for parent in [start, *start.parents]:
+        if not (parent / ".git").exists():
+            continue
+        try:
+            children = list(parent.parent.iterdir())
+        except OSError:
+            return None
+        for child in children:
+            found = _recorded_hub(child, "locate.py")
+            if found is not None:
+                return found
+        return None
+    return None
