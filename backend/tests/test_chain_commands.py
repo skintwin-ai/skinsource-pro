@@ -8,6 +8,7 @@ from src.chain_commands import (
     ingredient_create_guard,
     record_created_ingredient,
     record_received_lot,
+    record_received_package,
     record_supplier_qualification,
     respond,
 )
@@ -89,6 +90,39 @@ class ChainCommandTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertFalse(body["ok"])
         self.assertFalse(ledger.exists())
+
+    def test_package_receipt_accepts_a_positive_piece_count(self) -> None:
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            body, status = record_received_package(
+                {
+                    "component_id": "bottle-30",
+                    "name": "30 ml bottle",
+                    "lot_id": "lot-bottle",
+                    "supplier_name": "Cape Glass",
+                    "pieces": 4,
+                }
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 200)
+        self.assertEqual(body["artifact"]["pieces"], 4)
+        self.assertEqual(body["artifact"]["supplier_name"], "Cape Glass")
+        rejected, rejected_status = respond(
+            {
+                "command": "receive_package",
+                "args": {
+                    "component_id": "bottle-30",
+                    "name": "30 ml bottle",
+                    "lot_id": "lot-bottle",
+                    "supplier_name": "Cape Glass",
+                    "pieces": 0,
+                },
+            }
+        )
+        self.assertEqual(rejected_status, 400)
+        self.assertFalse(rejected["ok"])
 
     def test_completed_procurement_receives_kilograms_as_milligrams(self) -> None:
         previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)

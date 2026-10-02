@@ -93,6 +93,35 @@ def kilograms_to_milligrams(value: object) -> int:
     return milligrams
 
 
+def receive_package(args: dict) -> dict:
+    pieces = args.get("pieces")
+    if isinstance(pieces, bool) or not isinstance(pieces, int) or pieces < 1:
+        raise StageRejection("pieces must be a positive integer")
+    return {
+        "component_id": _text(args.get("component_id"), "component_id"),
+        "name": _text(args.get("name"), "package name"),
+        "lot_id": _text(args.get("lot_id"), "lot_id"),
+        "supplier_name": _text(args.get("supplier_name"), "supplier_name"),
+        "pieces": pieces,
+    }
+
+
+def record_received_package(data: dict) -> tuple[dict, int]:
+    """Receive a packaging lot before the procurement record is stored."""
+    return respond(
+        {
+            "command": "receive_package",
+            "args": {
+                "component_id": data.get("component_id") or "",
+                "name": data.get("name") or "",
+                "lot_id": data.get("lot_id") or "",
+                "supplier_name": data.get("supplier_name") or "",
+                "pieces": data.get("pieces"),
+            },
+        }
+    )
+
+
 def record_received_lot(data: dict) -> tuple[dict, int]:
     """Receive a lot when a procurement request is completed."""
     milligrams = data.get("milligrams")
@@ -142,6 +171,7 @@ HANDLERS = {
     "specify_ingredient": specify_ingredient,
     "qualify_supplier": qualify_supplier,
     "receive_lot": receive_lot,
+    "receive_package": receive_package,
 }
 
 
