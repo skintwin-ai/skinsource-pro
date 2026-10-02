@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from src.chain_commands import (
+    completed_procurement_receipt,
     ingredient_create_guard,
     record_created_ingredient,
     record_received_lot,
@@ -204,6 +205,113 @@ class ChainCommandTests(unittest.TestCase):
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
                 else:
                     os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+
+    def test_a_completed_procurement_receives_the_lot_once(self) -> None:
+        self.assertIsNone(
+            completed_procurement_receipt(
+                {"status": "draft", "quantity_needed": 0.05},
+                "glycerin",
+                "1",
+            )
+        )
+        previous = os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+        try:
+            body, status = completed_procurement_receipt(
+                {
+                    "status": "completed",
+                    "quantity_needed": 0.05,
+                    "lot_id": "lot-glycerin",
+                    "qualification_id": "qual-glycerin",
+                },
+                "glycerin",
+                "1",
+            )
+        finally:
+            if previous is not None:
+                os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 200)
+        self.assertEqual(body["artifact"]["milligrams"], 50_000)
+        packaged, packaged_status = completed_procurement_receipt(
+            {
+                "status": "completed",
+                "component_id": "bottle-30",
+                "name": "30 ml bottle",
+                "supplier_name": "Cape Glass",
+                "pieces": 4,
+                "lot_id": "lot-bottle",
+            },
+            "glycerin",
+            "2",
+        )
+        self.assertEqual(packaged_status, 200)
+        self.assertEqual(packaged["artifact"]["pieces"], 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous_ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                missing, missing_status = completed_procurement_receipt(
+                    {
+                        "status": "completed",
+                        "lot_id": "lot-glycerin",
+                        "qualification_id": "qual-glycerin",
+                        "milligrams": 50_000,
+                    },
+                    "glycerin",
+                    "1",
+                )
+                self.assertEqual(missing_status, 400)
+                self.assertFalse(missing["ok"])
+                self.assertFalse(ledger.exists())
+                specified, specified_status = respond(
+                    {
+                        "command": "specify_ingredient",
+                        "args": {"ingredient_id": "glycerin", "inci": "Glycerin", "cas": "56-81-5"},
+                    }
+                )
+                self.assertEqual(specified_status, 200)
+                qualified, qualified_status = respond(
+                    {
+                        "command": "qualify_supplier",
+                        "args": {
+                            "qualification_id": "qual-glycerin",
+                            "supplier_name": "Inland Humectants",
+                            "ingredient_id": "glycerin",
+                        },
+                    }
+                )
+                self.assertEqual(qualified_status, 200)
+                received, received_status = completed_procurement_receipt(
+                    {
+                        "status": "completed",
+                        "lot_id": "lot-glycerin",
+                        "qualification_id": "qual-glycerin",
+                        "quantity_needed": 0.05,
+                    },
+                    "glycerin",
+                    "1",
+                )
+                self.assertEqual(received_status, 200)
+                text = ledger.read_text(encoding="utf-8")
+                self.assertIn("lot-glycerin", text)
+                again, again_status = completed_procurement_receipt(
+                    {
+                        "status": "completed",
+                        "lot_id": "lot-glycerin",
+                        "qualification_id": "qual-glycerin",
+                        "quantity_needed": 0.05,
+                    },
+                    "glycerin",
+                    "1",
+                )
+                self.assertEqual(again_status, 400)
+                self.assertFalse(again["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous_ledger is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous_ledger
 
     def test_supply_chain_route_rejects_an_unknown_command(self) -> None:
         body, status = respond({"command": "manufacture", "args": {}})

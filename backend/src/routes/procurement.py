@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import record_received_lot, use_shared_ledger
+from src.chain_commands import completed_procurement_receipt, use_shared_ledger
 from src.models.user import db, User
 from src.models import ProcurementRequest, Ingredient, Supplier
 from sqlalchemy import or_, and_, desc
@@ -141,6 +141,15 @@ def create_procurement_request():
             procurement_request.quality_requirements = json.dumps(data['quality_requirements'])
         
         db.session.add(procurement_request)
+        if data.get('status') == 'completed':
+            db.session.flush()
+            use_shared_ledger()
+            received = completed_procurement_receipt(data, ingredient.name, str(procurement_request.id))
+            if received is not None:
+                body, received_status = received
+                if received_status != 200:
+                    db.session.rollback()
+                    return jsonify({'error': body.get('error', 'lot rejected')}), received_status
         db.session.commit()
         
         return jsonify(procurement_request.to_dict()), 201
@@ -162,32 +171,16 @@ def update_procurement_request(request_id):
         if data.get('status') == 'completed':
             ingredient = Ingredient.query.get(procurement_request.ingredient_id)
             use_shared_ledger()
-            if data.get("component_id") and data.get("pieces") is not None:
-                from src.chain_commands import record_received_package
-
-                received, received_status = record_received_package(
-                    {
-                        "component_id": data.get("component_id"),
-                        "name": data.get("name") or data.get("component_id"),
-                        "lot_id": data.get("lot_id") or f"pack-{procurement_request.id}",
-                        "supplier_name": data.get("supplier_name") or "",
-                        "pieces": data.get("pieces"),
-                    }
-                )
+            received = completed_procurement_receipt(
+                data,
+                ingredient.name if ingredient is not None else "",
+                str(procurement_request.id),
+                data.get("quantity_needed", procurement_request.quantity_needed),
+            )
+            if received is not None:
+                body, received_status = received
                 if received_status != 200:
-                    return jsonify({"error": received.get("error", "package rejected")}), received_status
-            else:
-                received, received_status = record_received_lot(
-                    {
-                        "lot_id": data.get("lot_id") or f"lot-{procurement_request.id}",
-                        "ingredient_id": ingredient.name if ingredient is not None else "",
-                        "qualification_id": data.get("qualification_id") or "",
-                        "milligrams": data.get("milligrams"),
-                        "quantity_kg": data.get("quantity_needed", procurement_request.quantity_needed),
-                    }
-                )
-            if received_status != 200:
-                return jsonify({"error": received.get("error", "lot rejected")}), received_status
+                    return jsonify({"error": body.get("error", "lot rejected")}), received_status
 
         # Update basic fields
         for field in ['title', 'description', 'quantity_needed', 'target_price', 

@@ -187,6 +187,38 @@ def record_received_lot(data: dict) -> tuple[dict, int]:
     )
 
 
+def completed_procurement_receipt(
+    data: dict,
+    ingredient_name: str,
+    request_key: str,
+    quantity_kg: object = None,
+) -> tuple[dict, int] | None:
+    """A procurement created or updated as completed receives its lot or package."""
+    if not isinstance(data, dict) or data.get("status") != "completed":
+        return None
+    if data.get("component_id") and data.get("pieces") is not None:
+        return record_received_package(
+            {
+                "component_id": data.get("component_id"),
+                "name": data.get("name") or data.get("component_id"),
+                "lot_id": data.get("lot_id") or f"pack-{request_key}",
+                "supplier_name": data.get("supplier_name") or "",
+                "pieces": data.get("pieces"),
+            }
+        )
+    if quantity_kg is None:
+        quantity_kg = data.get("quantity_needed")
+    return record_received_lot(
+        {
+            "lot_id": data.get("lot_id") or f"lot-{request_key}",
+            "ingredient_id": ingredient_name or "",
+            "qualification_id": data.get("qualification_id") or "",
+            "milligrams": data.get("milligrams"),
+            "quantity_kg": quantity_kg,
+        }
+    )
+
+
 def respond(body: dict) -> tuple[dict, int]:
     command = body.get("command")
     handler = HANDLERS.get(command)
