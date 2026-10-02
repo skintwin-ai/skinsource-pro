@@ -83,6 +83,55 @@ class ChainCommandTests(unittest.TestCase):
                 else:
                     os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
 
+    def test_a_display_name_update_keeps_the_ledger_ingredient(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                created, created_status = record_created_ingredient(
+                    {
+                        "name": "Ascorbic Acid",
+                        "ingredientId": "ascorbic",
+                        "inci_name": "Ascorbic Acid",
+                        "cas_number": "50-81-7",
+                    }
+                )
+                self.assertEqual(created_status, 200, created)
+                text = ledger.read_text(encoding="utf-8")
+                renamed, renamed_status = record_updated_ingredient(
+                    {
+                        "name": "ascorbic",
+                        "inci_name": "Ascorbic Acid",
+                        "cas_number": "50-81-7",
+                    },
+                    {
+                        "name": "Vitamin C",
+                        "inci_name": "Ascorbic Acid",
+                        "cas_number": "50-81-7",
+                    },
+                )
+                self.assertEqual(renamed_status, 200, renamed)
+                self.assertEqual(renamed["count"], 0)
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+                self.assertNotIn("Vitamin C", text)
+                changed, changed_status = record_updated_ingredient(
+                    {
+                        "name": "ascorbic",
+                        "inci_name": "Ascorbic Acid",
+                        "cas_number": "50-81-7",
+                    },
+                    {"name": "Vitamin C", "cas_number": "56-81-5"},
+                )
+                self.assertEqual(changed_status, 400)
+                self.assertFalse(changed["ok"])
+                self.assertEqual(ledger.read_text(encoding="utf-8"), text)
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+
     def test_an_ingredient_named_by_ledger_fields_is_specified_once(self) -> None:
         self.assertIsNone(record_created_ingredient({"name": "Water", "category": "solvent"}))
         with tempfile.TemporaryDirectory() as tmp:

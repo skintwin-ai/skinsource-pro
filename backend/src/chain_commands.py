@@ -131,15 +131,25 @@ def record_created_ingredient(data: dict) -> tuple[dict, int] | None:
 
 
 def record_updated_ingredient(existing: dict, data: dict) -> tuple[dict, int] | None:
-    """Specify an ingredient when an update first gives it an INCI name and CAS number."""
+    """Specify an ingredient when an update first gives it an INCI name and CAS number.
+
+    The product row keeps a display name. Sending that name back must stay on
+    the ingredient id already recorded, not open a second ledger ingredient.
+    """
     if not isinstance(existing, dict) or not isinstance(data, dict):
         return None
     if not any(key in data for key in _IDENTITY_KEYS):
         return None
     merged = dict(existing)
+    locked = _named(existing, "ingredientId", "ingredient_id", "name")
+    explicit = _named(data, "ingredientId", "ingredient_id")
     for key in _IDENTITY_KEYS:
+        if key == "name" and locked and not explicit:
+            continue
         if key in data:
             merged[key] = data[key]
+    if locked and not explicit:
+        merged["ingredient_id"] = locked
     command = ingredient_identity(merged)
     if command is None:
         return None
