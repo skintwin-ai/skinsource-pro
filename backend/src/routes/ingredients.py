@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from src.chain_commands import (
     ingredient_column_values,
+    ledger_ingredient_id,
     record_created_ingredient,
     record_updated_ingredient,
     respond,
@@ -169,7 +170,9 @@ def update_ingredient(ingredient_id):
         use_shared_ledger()
         recorded = record_updated_ingredient(
             {
-                "name": ingredient.name,
+                "name": ledger_ingredient_id(
+                    ingredient.name, ingredient.inci_name, ingredient.cas_number
+                ),
                 "inci_name": ingredient.inci_name,
                 "cas_number": ingredient.cas_number,
             },

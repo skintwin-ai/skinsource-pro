@@ -153,6 +153,43 @@ def record_updated_ingredient(existing: dict, data: dict) -> tuple[dict, int] | 
     return respond({"command": "specify_ingredient", "args": args})
 
 
+def ledger_ingredient_id(name: object, inci: object, cas: object) -> str:
+    """The ledger id for this INCI name and CAS number.
+
+    A create payload can record ``ascorbic`` while the product row keeps the
+    display name ``Ascorbic Acid``. Later qualification and receipt must use
+    the ledger id. When the ledger has no single match, the display name remains
+    the id.
+    """
+    fallback = name.strip() if isinstance(name, str) else ""
+    inci_text = inci.strip() if isinstance(inci, str) else ""
+    cas_text = cas.strip() if isinstance(cas, str) else ""
+    if not inci_text or not cas_text:
+        return fallback
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return fallback
+    path = Path(raw)
+    if not path.is_file():
+        return fallback
+    found: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "specify_ingredient":
+            continue
+        args = record.get("args") or {}
+        if args.get("inci") != inci_text or args.get("cas") != cas_text:
+            continue
+        ingredient_id = args.get("ingredient_id")
+        if isinstance(ingredient_id, str) and ingredient_id not in found:
+            found.append(ingredient_id)
+    if len(found) == 1:
+        return found[0]
+    return fallback
+
+
 def _recorded_ingredient(ingredient_id: str) -> dict | None:
     raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
     if not raw:

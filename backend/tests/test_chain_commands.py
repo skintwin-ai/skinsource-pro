@@ -7,6 +7,7 @@ from pathlib import Path
 from src.chain_commands import (
     completed_procurement_receipt,
     ingredient_create_guard,
+    ledger_ingredient_id,
     offering_qualification,
     record_created_ingredient,
     record_received_lot,
@@ -24,6 +25,63 @@ class ChainCommandTests(unittest.TestCase):
                 {"name": "Water", "inci_name": "Aqua", "cas_number": "not-a-cas"}
             )
         self.assertIn("CAS", str(caught.exception))
+
+    def test_a_display_name_resolves_to_the_ledger_ingredient(self) -> None:
+        self.assertEqual(ledger_ingredient_id("Ascorbic Acid", "Ascorbic Acid", "50-81-7"), "Ascorbic Acid")
+        self.assertEqual(ledger_ingredient_id("glycerin", None, None), "glycerin")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            try:
+                specified, specified_status = respond(
+                    {
+                        "command": "specify_ingredient",
+                        "args": {
+                            "ingredient_id": "ascorbic",
+                            "inci": "Ascorbic Acid",
+                            "cas": "50-81-7",
+                        },
+                    }
+                )
+                self.assertEqual(specified_status, 200, specified)
+                self.assertEqual(
+                    ledger_ingredient_id("Ascorbic Acid", "Ascorbic Acid", "50-81-7"),
+                    "ascorbic",
+                )
+                self.assertEqual(
+                    ledger_ingredient_id("glycerin", "Glycerin", "56-81-5"),
+                    "glycerin",
+                )
+                respond(
+                    {
+                        "command": "specify_ingredient",
+                        "args": {
+                            "ingredient_id": "ascorbic-b",
+                            "inci": "Glycerin",
+                            "cas": "56-81-5",
+                        },
+                    }
+                )
+                respond(
+                    {
+                        "command": "specify_ingredient",
+                        "args": {
+                            "ingredient_id": "glycerin",
+                            "inci": "Glycerin",
+                            "cas": "56-81-5",
+                        },
+                    }
+                )
+                self.assertEqual(
+                    ledger_ingredient_id("Glycerin", "Glycerin", "56-81-5"),
+                    "Glycerin",
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
 
     def test_an_ingredient_named_by_ledger_fields_is_specified_once(self) -> None:
         self.assertIsNone(record_created_ingredient({"name": "Water", "category": "solvent"}))

@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from src.chain_commands import (
+    ledger_ingredient_id,
     offering_qualification,
     record_supplier_qualification,
     use_shared_ledger,
@@ -262,7 +263,11 @@ def add_supplier_ingredient(supplier_id):
 
         use_shared_ledger()
         qualified, status = record_supplier_qualification(
-            offering_qualification(data, supplier.company_name, ingredient.name)
+            offering_qualification(
+                data,
+                supplier.company_name,
+                ledger_ingredient_id(ingredient.name, ingredient.inci_name, ingredient.cas_number),
+            )
         )
         if status != 200:
             return jsonify({"error": qualified.get("error", "qualification rejected")}), status

@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import completed_procurement_receipt, use_shared_ledger
+from src.chain_commands import completed_procurement_receipt, ledger_ingredient_id, use_shared_ledger
 from src.models.user import db, User
 from src.models import ProcurementRequest, Ingredient, Supplier
 from sqlalchemy import or_, and_, desc
@@ -144,7 +144,11 @@ def create_procurement_request():
         if data.get('status') == 'completed':
             db.session.flush()
             use_shared_ledger()
-            received = completed_procurement_receipt(data, ingredient.name, str(procurement_request.id))
+            received = completed_procurement_receipt(
+                data,
+                ledger_ingredient_id(ingredient.name, ingredient.inci_name, ingredient.cas_number),
+                str(procurement_request.id),
+            )
             if received is not None:
                 body, received_status = received
                 if received_status != 200:
@@ -173,7 +177,11 @@ def update_procurement_request(request_id):
             use_shared_ledger()
             received = completed_procurement_receipt(
                 data,
-                ingredient.name if ingredient is not None else "",
+                ledger_ingredient_id(
+                    ingredient.name if ingredient is not None else "",
+                    ingredient.inci_name if ingredient is not None else None,
+                    ingredient.cas_number if ingredient is not None else None,
+                ),
                 str(procurement_request.id),
                 data.get("quantity_needed", procurement_request.quantity_needed),
             )
