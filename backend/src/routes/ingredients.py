@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from src.chain_commands import StageRejection, ingredient_create_guard, respond
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -98,6 +99,13 @@ def get_ingredient(ingredient_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@ingredients_bp.route('/supply-chain', methods=['POST'])
+def supply_chain_command():
+    """Accept an ingredient, qualification, or lot command for the org ledger."""
+    body, status = respond(request.get_json(silent=True) or {})
+    return jsonify(body), status
+
+
 @ingredients_bp.route('/ingredients', methods=['POST'])
 def create_ingredient():
     """Create a new ingredient"""
@@ -106,6 +114,11 @@ def create_ingredient():
         
         if not data or 'name' not in data:
             return jsonify({'error': 'Name is required'}), 400
+
+        try:
+            ingredient_create_guard(data)
+        except StageRejection as exc:
+            return jsonify({'error': str(exc)}), 400
         
         ingredient = Ingredient(
             name=data['name'],
