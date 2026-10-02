@@ -42,17 +42,34 @@ def receive_lot(args: dict) -> dict:
     }
 
 
-def ingredient_create_guard(data: dict) -> dict | None:
-    """Validate INCI and CAS on the existing ingredient create payload."""
+def ingredient_identity(data: dict) -> dict | None:
+    """Map an ingredient create payload onto a specify command, when it has identity."""
     if not data.get("inci_name") and not data.get("cas_number"):
         return None
-    return specify_ingredient(
-        {
+    return {
+        "command": "specify_ingredient",
+        "args": {
             "ingredient_id": data.get("name") or "",
             "inci": data.get("inci_name") or "",
             "cas": data.get("cas_number") or "",
-        }
-    )
+        },
+    }
+
+
+def ingredient_create_guard(data: dict) -> dict | None:
+    """Validate INCI and CAS on the existing ingredient create payload."""
+    command = ingredient_identity(data)
+    if command is None:
+        return None
+    return specify_ingredient(command["args"])
+
+
+def record_created_ingredient(data: dict) -> tuple[dict, int] | None:
+    """Accept the ingredient on the shared ledger before the product database write."""
+    command = ingredient_identity(data)
+    if command is None:
+        return None
+    return respond(command)
 
 
 def respond(body: dict) -> tuple[dict, int]:

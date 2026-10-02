@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import StageRejection, ingredient_create_guard, respond, use_shared_ledger
+from src.chain_commands import record_created_ingredient, respond, use_shared_ledger
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -116,10 +116,12 @@ def create_ingredient():
         if not data or 'name' not in data:
             return jsonify({'error': 'Name is required'}), 400
 
-        try:
-            ingredient_create_guard(data)
-        except StageRejection as exc:
-            return jsonify({'error': str(exc)}), 400
+        use_shared_ledger()
+        recorded = record_created_ingredient(data)
+        if recorded is not None:
+            body, status = recorded
+            if status != 200:
+                return jsonify({'error': body.get('error', 'ingredient rejected')}), status
         
         ingredient = Ingredient(
             name=data['name'],
