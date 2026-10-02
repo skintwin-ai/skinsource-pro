@@ -72,6 +72,20 @@ def record_created_ingredient(data: dict) -> tuple[dict, int] | None:
     return respond(command)
 
 
+def record_supplier_qualification(data: dict) -> tuple[dict, int]:
+    """Qualify a supplier for an ingredient before the offering is stored."""
+    return respond(
+        {
+            "command": "qualify_supplier",
+            "args": {
+                "qualification_id": data.get("qualification_id") or "",
+                "supplier_name": data.get("supplier_name") or "",
+                "ingredient_id": data.get("ingredient_id") or "",
+            },
+        }
+    )
+
+
 def respond(body: dict) -> tuple[dict, int]:
     command = body.get("command")
     handler = HANDLERS.get(command)

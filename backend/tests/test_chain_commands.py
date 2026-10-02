@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.chain_commands import ingredient_create_guard, record_created_ingredient, respond
+from src.chain_commands import (
+    ingredient_create_guard,
+    record_created_ingredient,
+    record_supplier_qualification,
+    respond,
+)
 
 
 class ChainCommandTests(unittest.TestCase):
@@ -62,6 +67,29 @@ class ChainCommandTests(unittest.TestCase):
                     os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
                 else:
                     os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+
+    def test_supplier_qualification_against_an_empty_ledger_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "supply-chain.jsonl"
+            previous = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+            os.environ["SKINTWIN_CHAIN_LEDGER"] = str(ledger)
+            os.environ["SKINTWIN_HUB_ROOT"] = "/agent/repos/skintwin-ecosystem-design"
+            try:
+                body, status = record_supplier_qualification(
+                    {
+                        "qualification_id": "qual-ascorbic",
+                        "supplier_name": "Cape Acids",
+                        "ingredient_id": "ascorbic",
+                    }
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("SKINTWIN_CHAIN_LEDGER", None)
+                else:
+                    os.environ["SKINTWIN_CHAIN_LEDGER"] = previous
+        self.assertEqual(status, 400)
+        self.assertFalse(body["ok"])
+        self.assertFalse(ledger.exists())
 
     def test_supply_chain_route_rejects_an_unknown_command(self) -> None:
         body, status = respond({"command": "manufacture", "args": {}})
