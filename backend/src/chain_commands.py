@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import subprocess
-import sys
 from pathlib import Path
 
 CAS_RE = re.compile(r"^\d{2,7}-\d{2}-\d$")
@@ -148,27 +145,18 @@ HANDLERS = {
 
 
 def _commit(request: dict, result: tuple[dict, int]) -> tuple[dict, int]:
-    body, status = result
+    _body, status = result
     if status != 200 or os.environ.get("SKINTWIN_CHAIN_SKIP_DISPATCH") == "1":
         return result
-    ledger = os.environ.get("SKINTWIN_CHAIN_LEDGER")
-    if not ledger:
+    if not os.environ.get("SKINTWIN_CHAIN_LEDGER"):
         return result
-    hub = _hub_root()
-    if hub is None:
+    locator = _locator()
+    if locator is None:
         return {"ok": False, "error": "supply-chain hub is not present"}, 400
-    completed = subprocess.run(
-        [sys.executable, "-m", "domain.ledger"],
-        input=json.dumps(request),
-        text=True,
-        capture_output=True,
-        cwd=hub,
-        check=False,
-    )
-    if completed.returncode != 0:
-        message = _ledger_error(completed.stdout, completed.stderr)
-        return {"ok": False, "error": message}, 400
-    return body, status
+    error = locator.commit_command(request)
+    if error:
+        return {"ok": False, "error": error}, 400
+    return result
 
 
 def use_shared_ledger() -> None:
@@ -213,29 +201,6 @@ def _locate_script() -> Path | None:
     for parent in [start, *start.parents]:
         if not (parent / ".git").exists():
             continue
-        try:
-            children = list(parent.parent.iterdir())
-        except OSError:
-            return None
-        for child in children:
-            script = child / "domain" / "locate.py"
-            if script.is_file() and (child / "domain" / "org-ecosystem.json").is_file():
-                return script
-        return None
+        script = parent.parent / "skintwin-ecosystem-design" / "domain" / "locate.py"
+        return script if script.is_file() else None
     return None
-
-
-def _hub_root() -> Path | None:
-    locator = _locator()
-    if locator is None:
-        return None
-    found = locator.find_hub()
-    return Path(found) if found else None
-
-
-def _ledger_error(stdout: str, stderr: str) -> str:
-    try:
-        payload = json.loads(stdout or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    return str(payload.get("error") or stderr or "ledger rejected the command")
