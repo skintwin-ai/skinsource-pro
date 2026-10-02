@@ -220,8 +220,15 @@ def kilograms_to_milligrams(value: object) -> int:
     return milligrams
 
 
+def _whole_count(value: object) -> object:
+    """A digit string is that integer. Anything else is left as written."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
 def receive_package(args: dict) -> dict:
-    pieces = args.get("pieces")
+    pieces = _whole_count(args.get("pieces"))
     if isinstance(pieces, bool) or not isinstance(pieces, int) or pieces < 1:
         raise StageRejection("pieces must be a positive integer")
     return {
@@ -252,7 +259,7 @@ def record_received_package(data: dict) -> tuple[dict, int]:
 
 def record_received_lot(data: dict) -> tuple[dict, int]:
     """Receive a lot when a procurement request is completed."""
-    milligrams = data.get("milligrams")
+    milligrams = _whole_count(data.get("milligrams"))
     if not isinstance(milligrams, int) or isinstance(milligrams, bool):
         try:
             milligrams = kilograms_to_milligrams(_first_value(data, "quantityKg", "quantity_kg"))
