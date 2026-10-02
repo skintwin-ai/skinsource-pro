@@ -36,7 +36,7 @@ def receive_lot(args: dict) -> dict:
         "lot_id": _text(args.get("lot_id"), "lot_id"),
         "ingredient_id": _text(args.get("ingredient_id"), "ingredient_id"),
         "qualification_id": _text(args.get("qualification_id"), "qualification_id"),
-        "milligrams": _positive(args.get("milligrams"), "milligrams"),
+        "milligrams": _positive(_whole_count(args.get("milligrams")), "milligrams"),
     }
 
 
@@ -317,7 +317,9 @@ def respond(body: dict) -> tuple[dict, int]:
         artifact = handler(body.get("args") or {})
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
-    return _commit(body, ({"ok": True, "artifact": artifact}, 200))
+    # The ledger stores this body. A numeric string must be the integer it names.
+    normalized = {"command": command, "args": artifact}
+    return _commit(normalized, ({"ok": True, "artifact": artifact}, 200))
 
 
 def _text(value: object, label: str) -> str:
