@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from src.chain_commands import record_created_ingredient, respond, use_shared_ledger
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -98,6 +99,14 @@ def get_ingredient(ingredient_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@ingredients_bp.route('/supply-chain', methods=['POST'])
+def supply_chain_command():
+    """Accept an ingredient, qualification, or lot command for the org ledger."""
+    use_shared_ledger()
+    body, status = respond(request.get_json(silent=True) or {})
+    return jsonify(body), status
+
+
 @ingredients_bp.route('/ingredients', methods=['POST'])
 def create_ingredient():
     """Create a new ingredient"""
@@ -106,6 +115,13 @@ def create_ingredient():
         
         if not data or 'name' not in data:
             return jsonify({'error': 'Name is required'}), 400
+
+        use_shared_ledger()
+        recorded = record_created_ingredient(data)
+        if recorded is not None:
+            body, status = recorded
+            if status != 200:
+                return jsonify({'error': body.get('error', 'ingredient rejected')}), status
         
         ingredient = Ingredient(
             name=data['name'],
