@@ -64,6 +64,24 @@ def _named(record: object, *keys: str) -> str:
     return ""
 
 
+def _first_value(record: object, *keys: str) -> object:
+    """The first present value wins. A blank string falls through to the next key."""
+    if not isinstance(record, dict):
+        return None
+    for key in keys:
+        if key not in record:
+            continue
+        value = record[key]
+        if isinstance(value, str):
+            if not value.strip():
+                continue
+            return value.strip()
+        if value is None:
+            continue
+        return value
+    return None
+
+
 def ingredient_column_values(data: dict) -> dict:
     """INCI and CAS stored on the ingredient row, using the names the ledger reads."""
     if not isinstance(data, dict):
@@ -193,14 +211,15 @@ def receive_package(args: dict) -> dict:
 
 def record_received_package(data: dict) -> tuple[dict, int]:
     """Receive a packaging lot before the procurement record is stored."""
+    component_id = _named(data, "componentId", "component_id")
     return respond(
         {
             "command": "receive_package",
             "args": {
-                "component_id": data.get("component_id") or "",
-                "name": data.get("name") or "",
-                "lot_id": data.get("lot_id") or "",
-                "supplier_name": data.get("supplier_name") or "",
+                "component_id": component_id,
+                "name": _named(data, "name") or component_id,
+                "lot_id": _named(data, "lotId", "lot_id"),
+                "supplier_name": _named(data, "supplierName", "supplier_name"),
                 "pieces": data.get("pieces"),
             },
         }
@@ -212,16 +231,16 @@ def record_received_lot(data: dict) -> tuple[dict, int]:
     milligrams = data.get("milligrams")
     if not isinstance(milligrams, int) or isinstance(milligrams, bool):
         try:
-            milligrams = kilograms_to_milligrams(data.get("quantity_kg"))
+            milligrams = kilograms_to_milligrams(_first_value(data, "quantityKg", "quantity_kg"))
         except StageRejection as exc:
             return {"ok": False, "error": str(exc)}, 400
     return respond(
         {
             "command": "receive_lot",
             "args": {
-                "lot_id": data.get("lot_id") or "",
-                "ingredient_id": data.get("ingredient_id") or "",
-                "qualification_id": data.get("qualification_id") or "",
+                "lot_id": _named(data, "lotId", "lot_id"),
+                "ingredient_id": _named(data, "ingredientId", "ingredient_id"),
+                "qualification_id": _named(data, "qualificationId", "qualification_id"),
                 "milligrams": milligrams,
             },
         }
@@ -237,27 +256,25 @@ def completed_procurement_receipt(
     """A procurement created or updated as completed receives its lot or package."""
     if not isinstance(data, dict) or data.get("status") != "completed":
         return None
-    if data.get("component_id") and data.get("pieces") is not None:
-        return record_received_package(
-            {
-                "component_id": data.get("component_id"),
-                "name": data.get("name") or data.get("component_id"),
-                "lot_id": data.get("lot_id") or f"pack-{request_key}",
-                "supplier_name": data.get("supplier_name") or "",
-                "pieces": data.get("pieces"),
-            }
-        )
-    if quantity_kg is None:
-        quantity_kg = data.get("quantity_needed")
-    return record_received_lot(
-        {
-            "lot_id": data.get("lot_id") or f"lot-{request_key}",
-            "ingredient_id": ingredient_name or "",
-            "qualification_id": data.get("qualification_id") or "",
-            "milligrams": data.get("milligrams"),
-            "quantity_kg": quantity_kg,
-        }
-    )
+    component_id = _named(data, "componentId", "component_id")
+    if component_id and data.get("pieces") is not None:
+        package = dict(data)
+        if not _named(data, "name"):
+            package["name"] = component_id
+        if not _named(data, "lotId", "lot_id"):
+            package["lot_id"] = f"pack-{request_key}"
+        return record_received_package(package)
+    resolved_quantity = _first_value(data, "quantityKg", "quantity_kg")
+    if resolved_quantity is None:
+        resolved_quantity = quantity_kg if quantity_kg is not None else data.get("quantity_needed")
+    lot = dict(data)
+    lot["ingredient_id"] = ingredient_name or ""
+    lot.pop("ingredientId", None)
+    lot.pop("quantityKg", None)
+    lot["quantity_kg"] = resolved_quantity
+    if not _named(data, "lotId", "lot_id"):
+        lot["lot_id"] = f"lot-{request_key}"
+    return record_received_lot(lot)
 
 
 def respond(body: dict) -> tuple[dict, int]:
