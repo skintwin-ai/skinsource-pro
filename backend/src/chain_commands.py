@@ -36,20 +36,80 @@ def receive_lot(args: dict) -> dict:
         "lot_id": _text(args.get("lot_id"), "lot_id"),
         "ingredient_id": _text(args.get("ingredient_id"), "ingredient_id"),
         "qualification_id": _text(args.get("qualification_id"), "qualification_id"),
-        "milligrams": _positive(args.get("milligrams"), "milligrams"),
+        "milligrams": _positive(_whole_count(args.get("milligrams")), "milligrams"),
     }
+
+
+_IDENTITY_KEYS = (
+    "name",
+    "ingredientId",
+    "ingredient_id",
+    "inciName",
+    "inci_name",
+    "inci",
+    "casNumber",
+    "cas_number",
+    "cas",
+)
+
+
+def _named(record: object, *keys: str) -> str:
+    """The first non-blank string wins. A blank value falls through to the next key."""
+    if not isinstance(record, dict):
+        return ""
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _first_value(record: object, *keys: str) -> object:
+    """The first present value wins. A blank string falls through to the next key."""
+    if not isinstance(record, dict):
+        return None
+    for key in keys:
+        if key not in record:
+            continue
+        value = record[key]
+        if isinstance(value, str):
+            if not value.strip():
+                continue
+            return value.strip()
+        if value is None:
+            continue
+        return value
+    return None
+
+
+def ingredient_column_values(data: dict) -> dict:
+    """INCI and CAS stored on the ingredient row, using the names the ledger reads."""
+    if not isinstance(data, dict):
+        return {}
+    stored: dict[str, str] = {}
+    inci = _named(data, "inciName", "inci_name", "inci")
+    cas = _named(data, "casNumber", "cas_number", "cas")
+    if inci:
+        stored["inci_name"] = inci
+    if cas:
+        stored["cas_number"] = cas
+    return stored
 
 
 def ingredient_identity(data: dict) -> dict | None:
     """Map an ingredient create payload onto a specify command, when it has identity."""
-    if not data.get("inci_name") and not data.get("cas_number"):
+    if not isinstance(data, dict):
+        return None
+    inci = _named(data, "inciName", "inci_name", "inci")
+    cas = _named(data, "casNumber", "cas_number", "cas")
+    if not inci and not cas:
         return None
     return {
         "command": "specify_ingredient",
         "args": {
-            "ingredient_id": data.get("name") or "",
-            "inci": data.get("inci_name") or "",
-            "cas": data.get("cas_number") or "",
+            "ingredient_id": _named(data, "ingredientId", "ingredient_id", "name"),
+            "inci": inci,
+            "cas": cas,
         },
     }
 
@@ -70,21 +130,135 @@ def record_created_ingredient(data: dict) -> tuple[dict, int] | None:
     return respond(command)
 
 
+def record_updated_ingredient(existing: dict, data: dict) -> tuple[dict, int] | None:
+    """Specify an ingredient when an update first gives it an INCI name and CAS number.
+
+    The product row keeps a display name. Sending that name back must stay on
+    the ingredient id already recorded, not open a second ledger ingredient.
+    """
+    if not isinstance(existing, dict) or not isinstance(data, dict):
+        return None
+    if not any(key in data for key in _IDENTITY_KEYS):
+        return None
+    merged = dict(existing)
+    locked = _named(existing, "ingredientId", "ingredient_id", "name")
+    explicit = _named(data, "ingredientId", "ingredient_id")
+    for key in _IDENTITY_KEYS:
+        if key == "name" and locked and not explicit:
+            continue
+        if key in data:
+            merged[key] = data[key]
+    if locked and not explicit:
+        merged["ingredient_id"] = locked
+    command = ingredient_identity(merged)
+    if command is None:
+        return None
+    try:
+        args = specify_ingredient(command["args"])
+    except StageRejection as exc:
+        return {"ok": False, "error": str(exc)}, 400
+    prior = _recorded_ingredient(args["ingredient_id"])
+    if prior == args:
+        return {"ok": True, "count": 0}, 200
+    return respond({"command": "specify_ingredient", "args": args})
+
+
+def ledger_ingredient_id(name: object, inci: object, cas: object) -> str:
+    """The ledger id for this INCI name and CAS number.
+
+    A create payload can record ``ascorbic`` while the product row keeps the
+    display name ``Ascorbic Acid``. Later qualification and receipt must use
+    the ledger id. When the ledger has no single match, the display name remains
+    the id.
+    """
+    fallback = name.strip() if isinstance(name, str) else ""
+    inci_text = inci.strip() if isinstance(inci, str) else ""
+    cas_text = cas.strip() if isinstance(cas, str) else ""
+    if not inci_text or not cas_text:
+        return fallback
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return fallback
+    path = Path(raw)
+    if not path.is_file():
+        return fallback
+    found: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "specify_ingredient":
+            continue
+        args = record.get("args") or {}
+        if args.get("inci") != inci_text or args.get("cas") != cas_text:
+            continue
+        ingredient_id = args.get("ingredient_id")
+        if isinstance(ingredient_id, str) and ingredient_id not in found:
+            found.append(ingredient_id)
+    if len(found) == 1:
+        return found[0]
+    return fallback
+
+
+def _recorded_ingredient(ingredient_id: str) -> dict | None:
+    raw = os.environ.get("SKINTWIN_CHAIN_LEDGER")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        return None
+    found = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("command") != "specify_ingredient":
+            continue
+        args = record.get("args") or {}
+        if args.get("ingredient_id") == ingredient_id:
+            found = args
+    return found
+
+
 def record_supplier_qualification(data: dict) -> tuple[dict, int]:
     """Qualify a supplier for an ingredient before the offering is stored."""
     return respond(
         {
             "command": "qualify_supplier",
             "args": {
-                "qualification_id": data.get("qualification_id") or "",
-                "supplier_name": data.get("supplier_name") or "",
-                "ingredient_id": data.get("ingredient_id") or "",
+                "qualification_id": _named(data, "qualificationId", "qualification_id"),
+                "supplier_name": _named(data, "supplierName", "supplier_name"),
+                "ingredient_id": _named(data, "ingredientId", "ingredient_id"),
             },
         }
     )
 
 
+def offering_qualification(data: dict, supplier_name: str, ingredient_name: str) -> dict:
+    """Ledger fields for an offering. The ingredient name is the ledger id."""
+    payload = data if isinstance(data, dict) else {}
+    qualification_id = _named(payload, "qualificationId", "qualification_id")
+    supplier = supplier_name.strip() if isinstance(supplier_name, str) else ""
+    ingredient = ingredient_name.strip() if isinstance(ingredient_name, str) else ""
+    if not qualification_id:
+        qualification_id = f"{supplier}:{ingredient}"
+    return {
+        "qualification_id": qualification_id,
+        "supplier_name": supplier,
+        "ingredient_id": ingredient,
+    }
+
+
 def kilograms_to_milligrams(value: object) -> int:
+    """A numeric kilogram string is the same quantity. A blank or word is not."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise StageRejection("quantity_needed must be kilograms")
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise StageRejection("quantity_needed must be kilograms") from exc
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise StageRejection("quantity_needed must be kilograms")
     milligrams = int(round(float(value) * 1_000_000))
@@ -93,8 +267,15 @@ def kilograms_to_milligrams(value: object) -> int:
     return milligrams
 
 
+def _whole_count(value: object) -> object:
+    """A digit string is that integer. Anything else is left as written."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
 def receive_package(args: dict) -> dict:
-    pieces = args.get("pieces")
+    pieces = _whole_count(args.get("pieces"))
     if isinstance(pieces, bool) or not isinstance(pieces, int) or pieces < 1:
         raise StageRejection("pieces must be a positive integer")
     return {
@@ -108,14 +289,15 @@ def receive_package(args: dict) -> dict:
 
 def record_received_package(data: dict) -> tuple[dict, int]:
     """Receive a packaging lot before the procurement record is stored."""
+    component_id = _named(data, "componentId", "component_id")
     return respond(
         {
             "command": "receive_package",
             "args": {
-                "component_id": data.get("component_id") or "",
-                "name": data.get("name") or "",
-                "lot_id": data.get("lot_id") or "",
-                "supplier_name": data.get("supplier_name") or "",
+                "component_id": component_id,
+                "name": _named(data, "name") or component_id,
+                "lot_id": _named(data, "lotId", "lot_id"),
+                "supplier_name": _named(data, "supplierName", "supplier_name"),
                 "pieces": data.get("pieces"),
             },
         }
@@ -124,23 +306,53 @@ def record_received_package(data: dict) -> tuple[dict, int]:
 
 def record_received_lot(data: dict) -> tuple[dict, int]:
     """Receive a lot when a procurement request is completed."""
-    milligrams = data.get("milligrams")
+    milligrams = _whole_count(data.get("milligrams"))
     if not isinstance(milligrams, int) or isinstance(milligrams, bool):
         try:
-            milligrams = kilograms_to_milligrams(data.get("quantity_kg"))
+            milligrams = kilograms_to_milligrams(_first_value(data, "quantityKg", "quantity_kg"))
         except StageRejection as exc:
             return {"ok": False, "error": str(exc)}, 400
     return respond(
         {
             "command": "receive_lot",
             "args": {
-                "lot_id": data.get("lot_id") or "",
-                "ingredient_id": data.get("ingredient_id") or "",
-                "qualification_id": data.get("qualification_id") or "",
+                "lot_id": _named(data, "lotId", "lot_id"),
+                "ingredient_id": _named(data, "ingredientId", "ingredient_id"),
+                "qualification_id": _named(data, "qualificationId", "qualification_id"),
                 "milligrams": milligrams,
             },
         }
     )
+
+
+def completed_procurement_receipt(
+    data: dict,
+    ingredient_name: str,
+    request_key: str,
+    quantity_kg: object = None,
+) -> tuple[dict, int] | None:
+    """A procurement created or updated as completed receives its lot or package."""
+    if not isinstance(data, dict) or data.get("status") != "completed":
+        return None
+    component_id = _named(data, "componentId", "component_id")
+    if component_id and data.get("pieces") is not None:
+        package = dict(data)
+        if not _named(data, "name"):
+            package["name"] = component_id
+        if not _named(data, "lotId", "lot_id"):
+            package["lot_id"] = f"pack-{request_key}"
+        return record_received_package(package)
+    resolved_quantity = _first_value(data, "quantityKg", "quantity_kg")
+    if resolved_quantity is None:
+        resolved_quantity = quantity_kg if quantity_kg is not None else data.get("quantity_needed")
+    lot = dict(data)
+    lot["ingredient_id"] = ingredient_name or ""
+    lot.pop("ingredientId", None)
+    lot.pop("quantityKg", None)
+    lot["quantity_kg"] = resolved_quantity
+    if not _named(data, "lotId", "lot_id"):
+        lot["lot_id"] = f"lot-{request_key}"
+    return record_received_lot(lot)
 
 
 def respond(body: dict) -> tuple[dict, int]:
@@ -152,7 +364,9 @@ def respond(body: dict) -> tuple[dict, int]:
         artifact = handler(body.get("args") or {})
     except StageRejection as exc:
         return {"ok": False, "error": str(exc)}, 400
-    return _commit(body, ({"ok": True, "artifact": artifact}, 200))
+    # The ledger stores this body. A numeric string must be the integer it names.
+    normalized = {"command": command, "args": artifact}
+    return _commit(normalized, ({"ok": True, "artifact": artifact}, 200))
 
 
 def _text(value: object, label: str) -> str:

@@ -1,5 +1,12 @@
 from flask import Blueprint, request, jsonify
-from src.chain_commands import record_created_ingredient, respond, use_shared_ledger
+from src.chain_commands import (
+    ingredient_column_values,
+    ledger_ingredient_id,
+    record_created_ingredient,
+    record_updated_ingredient,
+    respond,
+    use_shared_ledger,
+)
 from src.models.user import db
 from src.models import Ingredient, SupplierIngredient, Supplier
 from sqlalchemy import or_, and_
@@ -123,10 +130,11 @@ def create_ingredient():
             if status != 200:
                 return jsonify({'error': body.get('error', 'ingredient rejected')}), status
         
+        columns = ingredient_column_values(data)
         ingredient = Ingredient(
             name=data['name'],
-            inci_name=data.get('inci_name'),
-            cas_number=data.get('cas_number'),
+            inci_name=columns.get('inci_name'),
+            cas_number=columns.get('cas_number'),
             category=data.get('category', 'other'),
             function=data.get('function'),
             description=data.get('description'),
@@ -158,12 +166,33 @@ def update_ingredient(ingredient_id):
         
         if not data:
             return jsonify({'error': 'No data provided'}), 400
+
+        use_shared_ledger()
+        recorded = record_updated_ingredient(
+            {
+                "name": ledger_ingredient_id(
+                    ingredient.name, ingredient.inci_name, ingredient.cas_number
+                ),
+                "inci_name": ingredient.inci_name,
+                "cas_number": ingredient.cas_number,
+            },
+            data,
+        )
+        if recorded is not None:
+            body, status = recorded
+            if status != 200:
+                return jsonify({'error': body.get('error', 'ingredient rejected')}), status
         
         # Update fields
-        for field in ['name', 'inci_name', 'cas_number', 'category', 'function', 
+        for field in ['name', 'category', 'function', 
                      'description', 'sustainability_score', 'evidence_level']:
             if field in data:
                 setattr(ingredient, field, data[field])
+        columns = ingredient_column_values(data)
+        if 'inci_name' in columns:
+            ingredient.inci_name = columns['inci_name']
+        if 'cas_number' in columns:
+            ingredient.cas_number = columns['cas_number']
         
         # Update price range
         if 'price_range' in data:
